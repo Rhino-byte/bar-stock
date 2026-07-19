@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,34 +15,98 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { fetchInventory, submitClosingStock } from "@/lib/api-client";
+import {
+  clearClosingDraft,
+  countFilledDrafts,
+  loadClosingDraft,
+  saveClosingDraft,
+  type ClosingDraftMap,
+} from "@/lib/closing-draft-storage";
+import { todayDateKey } from "@/lib/dates";
 import { calculateSales, calculateTotalStock } from "@/lib/stock";
 import { formatNumber } from "@/lib/utils";
 import type { InventoryItem } from "@/lib/types";
-
-type ClosingDraft = Record<string, string>;
 
 export function ClosingStockForm() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
-  const [drafts, setDrafts] = useState<ClosingDraft>({});
+  const [drafts, setDrafts] = useState<ClosingDraftMap>({});
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [restoredFromCache, setRestoredFromCache] = useState(false);
+  const [online, setOnline] = useState(true);
+  const draftsRef = useRef(drafts);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
+    draftsRef.current = drafts;
+  }, [drafts]);
+
+  useEffect(() => {
+    setOnline(typeof navigator !== "undefined" ? navigator.onLine : true);
+    function handleOnline() {
+      setOnline(true);
+      toast.message("Back online. You can sync remaining closing counts.");
+    }
+    function handleOffline() {
+      setOnline(false);
+      toast.message("You’re offline. Counts keep saving on this phone.");
+    }
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    const today = todayDateKey();
+    const cached = loadClosingDraft(today);
+
     fetchInventory()
       .then((list) => {
         setItems(list);
-        const initial: ClosingDraft = {};
+        const initial: ClosingDraftMap = {};
         for (const item of list) {
-          initial[item.itemId] = "";
+          initial[item.itemId] = cached?.drafts[item.itemId] ?? "";
+        }
+        // Keep orphan draft keys if item ids changed mid-day (still show in pending count via storage)
+        if (cached?.drafts) {
+          for (const [itemId, value] of Object.entries(cached.drafts)) {
+            if (!(itemId in initial)) {
+              initial[itemId] = value;
+            }
+          }
         }
         setDrafts(initial);
+        if (cached && countFilledDrafts(cached.drafts) > 0) {
+          setRestoredFromCache(true);
+          setDraftSavedAt(cached.updatedAt);
+          toast.success(
+            `Restored ${countFilledDrafts(cached.drafts)} unsynced closing count(s) from this phone.`
+          );
+        }
       })
       .catch((error) =>
         toast.error(error instanceof Error ? error.message : "Failed to load inventory")
       )
       .finally(() => setLoading(false));
   }, []);
+
+  // Autosave drafts whenever they change (after initial load).
+  useEffect(() => {
+    if (loading) return;
+    saveClosingDraft(drafts);
+    const filled = countFilledDrafts(drafts);
+    if (filled === 0) {
+      setDraftSavedAt(null);
+      setRestoredFromCache(false);
+    } else {
+      setDraftSavedAt(new Date().toISOString());
+    }
+  }, [drafts, loading]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -64,14 +128,34 @@ export function ClosingStockForm() {
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
   }, [items, drafts]);
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!pendingEntries.length) {
+  const filledCount = countFilledDrafts(drafts);
+
+  const syncPending = useCallback(async () => {
+    if (submittingRef.current) return;
+    if (!navigator.onLine) {
+      toast.error("You’re offline. Counts are saved on this phone — sync when connected.");
+      return;
+    }
+
+    const currentDrafts = draftsRef.current;
+    const entries = items
+      .map((item) => {
+        const raw = currentDrafts[item.itemId]?.trim() ?? "";
+        if (raw === "") return null;
+        const closing = Number(raw);
+        if (!Number.isFinite(closing) || closing < 0) return null;
+        const total = calculateTotalStock(item.openingStock, item.stockIn);
+        const sales = calculateSales(item.openingStock, item.stockIn, closing);
+        return { item, closing, total, sales };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+    if (!entries.length) {
       toast.error("Enter closing stock for at least one item.");
       return;
     }
 
-    for (const entry of pendingEntries) {
+    for (const entry of entries) {
       if (entry.closing > entry.total) {
         toast.error(
           `${entry.item.itemName}: closing (${entry.closing}) exceeds total (${entry.total}).`
@@ -80,10 +164,15 @@ export function ClosingStockForm() {
       }
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     let successCount = 0;
+    let remainingDrafts = { ...draftsRef.current };
     try {
-      for (const entry of pendingEntries) {
+      for (const entry of entries) {
+        if (!navigator.onLine) {
+          throw new Error("Connection lost. Remaining counts are still on this phone.");
+        }
         const result = await submitClosingStock({
           itemId: entry.item.itemId,
           closingStock: entry.closing,
@@ -93,21 +182,37 @@ export function ClosingStockForm() {
             item.itemId === result.item.itemId ? result.item : item
           )
         );
-        setDrafts((current) => ({ ...current, [entry.item.itemId]: "" }));
+        remainingDrafts = { ...remainingDrafts, [entry.item.itemId]: "" };
+        draftsRef.current = remainingDrafts;
+        setDrafts(remainingDrafts);
+        saveClosingDraft(remainingDrafts);
         successCount += 1;
+      }
+      if (countFilledDrafts(remainingDrafts) === 0) {
+        clearClosingDraft();
       }
       toast.success(
         `Closing stock saved for ${successCount} item${successCount === 1 ? "" : "s"}. Period rolled.`
       );
+      setRestoredFromCache(false);
     } catch (error) {
+      setDrafts(remainingDrafts);
+      draftsRef.current = remainingDrafts;
+      saveClosingDraft(remainingDrafts);
       toast.error(
         error instanceof Error
-          ? `${successCount} saved. ${error.message}`
-          : "Closing stock update failed"
+          ? `${successCount} saved to server. ${error.message}`
+          : `${successCount} saved. Remaining counts are cached on this phone.`
       );
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
+  }, [items]);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    await syncPending();
   }
 
   if (loading) {
@@ -118,17 +223,51 @@ export function ClosingStockForm() {
     );
   }
 
+  const statusParts: string[] = [];
+  if (!online) {
+    statusParts.push("Offline — counts save on this phone only");
+  } else if (filledCount > 0) {
+    statusParts.push(
+      `${filledCount} unsynced count${filledCount === 1 ? "" : "s"} cached on this phone`
+    );
+  } else {
+    statusParts.push("All synced — no local draft");
+  }
+  if (draftSavedAt && filledCount > 0) {
+    try {
+      statusParts.push(`last saved ${new Date(draftSavedAt).toLocaleTimeString()}`);
+    } catch {
+      // ignore
+    }
+  }
+  if (restoredFromCache && filledCount > 0) {
+    statusParts.push("restored after reload");
+  }
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Closing Stock (B.B.F)</CardTitle>
         <CardDescription>
           Enter the physical count remaining. Sales = (Opening + ADD) − Closing. Saving
-          rolls Opening to Closing and resets ADD.
+          rolls Opening to Closing and resets ADD. Drafts autosave on this phone if the
+          network drops.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={handleSubmit}>
+          <div
+            className={`rounded-lg border px-3 py-2 text-sm ${
+              online
+                ? filledCount > 0
+                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : "border-rose-200 bg-rose-50 text-rose-900"
+            }`}
+          >
+            {statusParts.join(" · ")}
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="closing-search">Search items</Label>
             <Input
@@ -232,11 +371,19 @@ export function ClosingStockForm() {
 
           <p className="text-sm text-slate-500">
             {pendingEntries.length} item{pendingEntries.length === 1 ? "" : "s"} ready to
-            close
+            sync
           </p>
 
-          <Button type="submit" className="w-full" disabled={submitting}>
-            {submitting ? "Saving…" : "Save closing stock"}
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={submitting || pendingEntries.length === 0}
+          >
+            {submitting
+              ? "Syncing…"
+              : !online
+                ? "Offline — open to sync later"
+                : "Save closing stock"}
           </Button>
         </form>
       </CardContent>
