@@ -298,11 +298,6 @@ export function reportSalesLedgerRows(
     });
   }
 
-  return rows.sort((a, b) => {
-    const aActive = a.add !== 0 || a.sales !== 0 || a.open !== 0 || a.bbf !== 0;
-    const bActive = b.add !== 0 || b.sales !== 0 || b.open !== 0 || b.bbf !== 0;
-    if (aActive && !bActive) return -1;
-    if (!aActive && bActive) return 1;
-    return a.itemName.localeCompare(b.itemName);
-  });
+  // Keep Google Sheet row order (items already come from Sheet1 top-to-bottom).
+  return rows;
 }
