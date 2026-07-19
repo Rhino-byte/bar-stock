@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+@keyframes loading-ellipsis {
+  0% {
+    content: "";
+  }
+  33% {
+    content: ".";
+  }
+  66% {
+    content: "..";
+  }
+  100% {
+    content: "...";
+  }
+}
+
+.loading-ellipsis::after {
+  display: inline-block;
+  width: 1.25em;
+  text-align: left;
+  animation: loading-ellipsis 1.2s steps(1, end) infinite;
+  content: "";
+}
+
+/* Merry Mary sales ledger (screen + print) */
+.sales-ledger {
+  border: 1.5px solid #0f172a;
+  color: #0f172a;
+  background: #fff;
+}
+
+.sales-ledger th,
+.sales-ledger td {
+  border: 1px solid #0f172a;
+  padding: 0.4rem 0.45rem;
+  vertical-align: middle;
+}
+
+.sales-ledger thead th {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  text-align: center;
+  background: #fff;
+  font-size: 0.75rem;
+}
+
+.sales-ledger .sales-ledger-item {
+  text-align: left;
+  font-weight: 500;
+}
+
+.sales-ledger .sales-ledger-num {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.sales-ledger tfoot td {
+  font-weight: 700;
+}
+
+.sales-ledger-title h2 {
+  letter-spacing: 0.04em;
+}
+
+@media print {
+  header,
+  .report-controls {
+    display: none !important;
+  }
+
+  body {
+    background: white;
+  }
+
+  .report-print-root {
+    break-inside: auto;
+  }
+
+  .report-print-root section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .sales-ledger-wrap {
+    overflow: visible !important;
+  }
+
+  .sales-ledger {
+    border-color: #000;
+    min-width: 0 !important;
+    width: 100% !important;
+    font-size: 10px;
+  }
+
+  .sales-ledger th,
+  .sales-ledger td {
+    border-color: #000;
+    padding: 0.25rem 0.3rem;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .sales-ledger thead {
+    display: table-header-group;
+  }
+
+  .sales-ledger tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .sales-ledger-title h2 {
+    font-size: 14pt;
+  }
+}
