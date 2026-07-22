@@ -1,23 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireClerkOrAdmin } from "@/lib/auth/api-auth";
-import { getLatestCloseBatch } from "@/lib/recent-closes";
-import { getTransactions } from "@/lib/sheets";
+import { buildRecentCloseReport } from "@/lib/recent-closes";
+import { getInventoryItems, getTransactions } from "@/lib/sheets";
 
 export async function GET(request: Request) {
   try {
     await requireClerkOrAdmin(request);
-    const transactions = await getTransactions();
-    const batch = getLatestCloseBatch(transactions);
-
-    if (!batch) {
-      return NextResponse.json({
-        closedAt: null,
-        userEmail: "",
-        rows: [],
-      });
-    }
-
-    return NextResponse.json(batch);
+    const [items, transactions] = await Promise.all([
+      getInventoryItems(),
+      getTransactions(),
+    ]);
+    const report = buildRecentCloseReport(items, transactions);
+    return NextResponse.json(report);
   } catch (error) {
     if (error instanceof Response) return error;
     console.error("GET /api/recent-closes", error);

@@ -69,7 +69,7 @@ export function RecentClosesClient() {
             Recent close
           </h1>
           <p className="text-sm text-slate-500">
-            Latest closing stock batch — previous opening and current B.B.F.
+            All catalog items for the latest close — previous opening and B.B.F.
           </p>
         </div>
         <Button
@@ -84,7 +84,7 @@ export function RecentClosesClient() {
 
       {!rows.length ? (
         <p className="rounded-lg border border-dashed border-slate-200 p-6 text-sm text-slate-500">
-          No closing stock has been saved yet.
+          No items in inventory yet.
         </p>
       ) : (
         <div className="report-print-root space-y-4">
@@ -93,8 +93,9 @@ export function RecentClosesClient() {
               Last closing stock
             </h2>
             <p className="text-sm text-slate-600">
-              {formatClosedAt(closedAt)}
-              {userEmail ? ` · ${userEmail}` : ""}
+              {closedAt
+                ? `${formatClosedAt(closedAt)}${userEmail ? ` · ${userEmail}` : ""}`
+                : "No close sync yet — showing current sheet stock for all items"}
             </p>
           </div>
 
