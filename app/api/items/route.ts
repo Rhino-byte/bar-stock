@@ -5,7 +5,11 @@ import {
   deleteInventoryItem,
   updateItemMetadata,
 } from "@/lib/sheets";
-import type { ItemCreateRequest, ItemUpdateRequest } from "@/lib/types";
+import type {
+  ItemCreateRequest,
+  ItemDeleteRequest,
+  ItemUpdateRequest,
+} from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
@@ -58,13 +62,13 @@ export async function PUT(request: Request) {
 export async function DELETE(request: Request) {
   try {
     await requireAdmin(request);
-    const body = (await request.json()) as { itemId?: string };
+    const body = (await request.json()) as ItemDeleteRequest;
 
     if (!body.itemId) {
       return NextResponse.json({ error: "itemId is required." }, { status: 400 });
     }
 
-    await deleteInventoryItem(body.itemId);
+    await deleteInventoryItem(body.itemId, body.rowIndex);
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof Response) return error;

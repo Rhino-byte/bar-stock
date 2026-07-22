@@ -64,6 +64,8 @@ export interface DashboardStats {
 
 export interface ItemUpdateRequest {
   itemId: string;
+  /** Prefer this when present so duplicate Item IDs still target the right sheet row. */
+  rowIndex?: number;
   itemName?: string;
   category?: string;
   unit?: string;
@@ -81,6 +83,11 @@ export interface ItemCreateRequest {
   reorderLevel?: number | null;
   notes?: string;
   price?: number;
+}
+
+export interface ItemDeleteRequest {
+  itemId: string;
+  rowIndex?: number;
 }
 
 /** True when transaction represents sold units (close or legacy out). */

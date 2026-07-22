@@ -17,6 +17,7 @@ import {
 import {
   createItem,
   deleteItem,
+  repairDuplicateItemIds,
   seedMerryMaryCatalog,
   updateItem,
 } from "@/lib/api-client";
@@ -41,9 +42,10 @@ const EMPTY_CREATE = {
 export function ItemsTable({ initialItems }: ItemsTableProps) {
   const [items, setItems] = useState(initialItems);
   const [search, setSearch] = useState("");
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [savingRow, setSavingRow] = useState<number | null>(null);
+  const [deletingRow, setDeletingRow] = useState<number | null>(null);
   const [seeding, setSeeding] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [createForm, setCreateForm] = useState(EMPTY_CREATE);
@@ -61,12 +63,13 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
   const isFiltering = search.trim().length > 0;
 
   async function saveItem(item: InventoryItem) {
-    setSavingId(item.itemId);
+    setSavingRow(item.rowIndex);
     try {
       const headers = await getFirebaseAuthHeader();
       const updated = await updateItem(
         {
           itemId: item.itemId,
+          rowIndex: item.rowIndex,
           itemName: item.itemName,
           category: item.category,
           unit: item.unit,
@@ -78,13 +81,15 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
         headers
       );
       setItems((current) =>
-        current.map((row) => (row.itemId === updated.itemId ? updated : row))
+        current.map((row) =>
+          row.rowIndex === updated.rowIndex ? updated : row
+        )
       );
       toast.success(`${updated.itemName} updated.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Update failed");
     } finally {
-      setSavingId(null);
+      setSavingRow(null);
     }
   }
 
@@ -96,16 +101,24 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
     ) {
       return;
     }
-    setDeletingId(item.itemId);
+    setDeletingRow(item.rowIndex);
     try {
       const headers = await getFirebaseAuthHeader();
-      await deleteItem(item.itemId, headers);
-      setItems((current) => current.filter((row) => row.itemId !== item.itemId));
+      await deleteItem(item.itemId, headers, item.rowIndex);
+      setItems((current) =>
+        current
+          .filter((row) => row.rowIndex !== item.rowIndex)
+          .map((row) =>
+            row.rowIndex > item.rowIndex
+              ? { ...row, rowIndex: row.rowIndex - 1 }
+              : row
+          )
+      );
       toast.success(`${item.itemName} deleted.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Delete failed");
     } finally {
-      setDeletingId(null);
+      setDeletingRow(null);
     }
   }
 
@@ -165,14 +178,39 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
     }
   }
 
+  async function handleRepairIds() {
+    if (
+      !window.confirm(
+        "Renumber duplicate Item IDs in the sheet? The first row of each ID is kept; later duplicates get new MM-xxx IDs. Stock values are unchanged."
+      )
+    ) {
+      return;
+    }
+    setRepairing(true);
+    try {
+      const headers = await getFirebaseAuthHeader();
+      const result = await repairDuplicateItemIds(headers);
+      setItems(result.items);
+      toast.success(
+        result.count === 0
+          ? "No duplicate Item IDs found."
+          : `Repaired ${result.count} duplicate ID${result.count === 1 ? "" : "s"}.`
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Repair failed");
+    } finally {
+      setRepairing(false);
+    }
+  }
+
   function updateField(
-    itemId: string,
+    rowIndex: number,
     field: keyof InventoryItem,
     value: string
   ) {
     setItems((current) =>
       current.map((item) => {
-        if (item.itemId !== itemId) return item;
+        if (item.rowIndex !== rowIndex) return item;
         if (field === "openingStock" || field === "price") {
           return { ...item, [field]: Number(value) || 0 };
         }
@@ -206,9 +244,17 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
           type="button"
           variant="outline"
           onClick={handleSeed}
-          disabled={seeding}
+          disabled={seeding || repairing}
         >
           {seeding ? "Loading…" : "Load Merry Mary catalog"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleRepairIds}
+          disabled={repairing || seeding}
+        >
+          {repairing ? "Repairing…" : "Repair duplicate IDs"}
         </Button>
       </div>
 
@@ -332,12 +378,12 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
               </TableHeader>
               <TableBody>
                 {filteredItems.map((item) => (
-                  <TableRow key={item.itemId}>
+                  <TableRow key={item.rowIndex}>
                     <TableCell>
                       <Input
                         value={item.itemName}
                         onChange={(event) =>
-                          updateField(item.itemId, "itemName", event.target.value)
+                          updateField(item.rowIndex, "itemName", event.target.value)
                         }
                       />
                     </TableCell>
@@ -345,7 +391,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                       <Input
                         value={item.category}
                         onChange={(event) =>
-                          updateField(item.itemId, "category", event.target.value)
+                          updateField(item.rowIndex, "category", event.target.value)
                         }
                       />
                     </TableCell>
@@ -353,7 +399,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                       <Input
                         value={item.unit}
                         onChange={(event) =>
-                          updateField(item.itemId, "unit", event.target.value)
+                          updateField(item.rowIndex, "unit", event.target.value)
                         }
                       />
                     </TableCell>
@@ -362,7 +408,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         type="number"
                         value={item.openingStock}
                         onChange={(event) =>
-                          updateField(item.itemId, "openingStock", event.target.value)
+                          updateField(item.rowIndex, "openingStock", event.target.value)
                         }
                       />
                     </TableCell>
@@ -374,7 +420,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         type="number"
                         value={item.price}
                         onChange={(event) =>
-                          updateField(item.itemId, "price", event.target.value)
+                          updateField(item.rowIndex, "price", event.target.value)
                         }
                       />
                     </TableCell>
@@ -383,7 +429,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         type="number"
                         value={item.reorderLevel ?? ""}
                         onChange={(event) =>
-                          updateField(item.itemId, "reorderLevel", event.target.value)
+                          updateField(item.rowIndex, "reorderLevel", event.target.value)
                         }
                       />
                     </TableCell>
@@ -391,7 +437,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                       <Input
                         value={item.notes}
                         onChange={(event) =>
-                          updateField(item.itemId, "notes", event.target.value)
+                          updateField(item.rowIndex, "notes", event.target.value)
                         }
                       />
                     </TableCell>
@@ -399,17 +445,17 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                       <Button
                         size="sm"
                         onClick={() => saveItem(item)}
-                        disabled={savingId === item.itemId}
+                        disabled={savingRow === item.rowIndex}
                       >
-                        {savingId === item.itemId ? "Saving..." : "Save"}
+                        {savingRow === item.rowIndex ? "Saving..." : "Save"}
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => handleDelete(item)}
-                        disabled={deletingId === item.itemId}
+                        disabled={deletingRow === item.rowIndex}
                       >
-                        {deletingId === item.itemId ? "…" : "Delete"}
+                        {deletingRow === item.rowIndex ? "…" : "Delete"}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -420,7 +466,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
 
           <div className="space-y-4 md:hidden">
             {filteredItems.map((item) => (
-              <Card key={item.itemId}>
+              <Card key={item.rowIndex}>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">
                     {item.itemName || "Unnamed item"}
@@ -433,7 +479,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                       id={`${item.itemId}-name`}
                       value={item.itemName}
                       onChange={(event) =>
-                        updateField(item.itemId, "itemName", event.target.value)
+                        updateField(item.rowIndex, "itemName", event.target.value)
                       }
                     />
                   </div>
@@ -444,7 +490,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         id={`${item.itemId}-category`}
                         value={item.category}
                         onChange={(event) =>
-                          updateField(item.itemId, "category", event.target.value)
+                          updateField(item.rowIndex, "category", event.target.value)
                         }
                       />
                     </div>
@@ -454,7 +500,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         id={`${item.itemId}-unit`}
                         value={item.unit}
                         onChange={(event) =>
-                          updateField(item.itemId, "unit", event.target.value)
+                          updateField(item.rowIndex, "unit", event.target.value)
                         }
                       />
                     </div>
@@ -467,7 +513,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         type="number"
                         value={item.openingStock}
                         onChange={(event) =>
-                          updateField(item.itemId, "openingStock", event.target.value)
+                          updateField(item.rowIndex, "openingStock", event.target.value)
                         }
                       />
                     </div>
@@ -486,7 +532,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         type="number"
                         value={item.price}
                         onChange={(event) =>
-                          updateField(item.itemId, "price", event.target.value)
+                          updateField(item.rowIndex, "price", event.target.value)
                         }
                       />
                     </div>
@@ -497,7 +543,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         type="number"
                         value={item.reorderLevel ?? ""}
                         onChange={(event) =>
-                          updateField(item.itemId, "reorderLevel", event.target.value)
+                          updateField(item.rowIndex, "reorderLevel", event.target.value)
                         }
                       />
                     </div>
@@ -508,7 +554,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                       id={`${item.itemId}-notes`}
                       value={item.notes}
                       onChange={(event) =>
-                        updateField(item.itemId, "notes", event.target.value)
+                        updateField(item.rowIndex, "notes", event.target.value)
                       }
                     />
                   </div>
@@ -516,14 +562,14 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                     <Button
                       className="flex-1"
                       onClick={() => saveItem(item)}
-                      disabled={savingId === item.itemId}
+                      disabled={savingRow === item.rowIndex}
                     >
-                      {savingId === item.itemId ? "Saving..." : "Save"}
+                      {savingRow === item.rowIndex ? "Saving..." : "Save"}
                     </Button>
                     <Button
                       variant="outline"
                       onClick={() => handleDelete(item)}
-                      disabled={deletingId === item.itemId}
+                      disabled={deletingRow === item.rowIndex}
                     >
                       Delete
                     </Button>

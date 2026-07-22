@@ -8,6 +8,7 @@ import { ResponsiveNav } from "@/components/layout/ResponsiveNav";
 
 const links = [
   { href: "/clerk/closing-stock", label: "Closing Stock" },
+  { href: "/clerk/recent-closes", label: "Recent close" },
   { href: "/clerk/stock-in", label: "Stock In" },
   { href: "/clerk/daily", label: "Today" },
 ];

@@ -54,6 +54,49 @@ export async function submitClosingStock(payload: {
   return data as { item: InventoryItem; sales: number; amount: number };
 }
 
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Sync many closing counts in one server request (few Sheets API calls). */
+export async function submitClosingStockBatch(
+  entries: Array<{ itemId: string; closingStock: number; notes?: string }>
+) {
+  const headers = await getFirebaseAuthHeader();
+  let attempt = 0;
+  const maxAttempts = 4;
+
+  while (true) {
+    attempt += 1;
+    const response = await fetch("/api/stock/close-batch", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ entries }),
+    });
+    const data = await response.json();
+
+    if (response.ok) {
+      return data as {
+        count: number;
+        results: Array<{ item: InventoryItem; sales: number; amount: number }>;
+        items: InventoryItem[];
+      };
+    }
+
+    const message = data.error ?? "Failed to save closing stock batch";
+    const retryable =
+      response.status === 429 ||
+      /quota|rate.?limit|RESOURCE_EXHAUSTED/i.test(String(message));
+
+    if (!retryable || attempt >= maxAttempts) {
+      throw new Error(message);
+    }
+
+    const delayMs = Math.min(8000, 1000 * 2 ** (attempt - 1));
+    await sleep(delayMs);
+  }
+}
+
 export async function fetchDailyStock(date?: string): Promise<{
   date: string;
   items: DailyStockItem[];
@@ -137,17 +180,42 @@ export async function createItem(
   return data.item as InventoryItem;
 }
 
-export async function deleteItem(itemId: string, headers: HeadersInit) {
+export async function deleteItem(
+  itemId: string,
+  headers: HeadersInit,
+  rowIndex?: number
+) {
   const response = await fetch("/api/items", {
     method: "DELETE",
     headers,
-    body: JSON.stringify({ itemId }),
+    body: JSON.stringify({ itemId, rowIndex }),
   });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error ?? "Failed to delete item");
   }
   return data;
+}
+
+export async function repairDuplicateItemIds(headers: HeadersInit) {
+  const response = await fetch("/api/items/repair-ids", {
+    method: "POST",
+    headers,
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error ?? "Failed to repair duplicate IDs");
+  }
+  return data as {
+    items: InventoryItem[];
+    repaired: Array<{
+      rowIndex: number;
+      from: string;
+      to: string;
+      itemName: string;
+    }>;
+    count: number;
+  };
 }
 
 export async function seedMerryMaryCatalog(headers: HeadersInit) {
@@ -172,4 +240,28 @@ export async function sendTestAlert(headers: HeadersInit) {
     throw new Error(data.error ?? "Failed to send test alert");
   }
   return data;
+}
+
+export async function fetchRecentCloses() {
+  const headers = await getFirebaseAuthHeader();
+  const response = await fetch("/api/recent-closes", {
+    headers,
+    cache: "no-store",
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error ?? "Failed to load recent closes");
+  }
+  return data as {
+    closedAt: string | null;
+    userEmail: string;
+    rows: Array<{
+      itemId: string;
+      itemName: string;
+      opening: number;
+      add: number;
+      closing: number;
+      sales: number;
+    }>;
+  };
 }

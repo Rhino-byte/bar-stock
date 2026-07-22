@@ -279,7 +279,45 @@ export async function getInventoryItemById(
   itemId: string
 ): Promise<InventoryItem | null> {
   const items = await getInventoryItems();
-  return items.find((item) => item.itemId === itemId) ?? null;
+  const matches = items.filter((item) => item.itemId === itemId);
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple rows share Item ID "${itemId}". Use Repair duplicate IDs on the Items page, or pass rowIndex.`
+    );
+  }
+  return matches[0];
+}
+
+export async function getInventoryItemByRowIndex(
+  rowIndex: number
+): Promise<InventoryItem | null> {
+  const items = await getInventoryItems();
+  return items.find((item) => item.rowIndex === rowIndex) ?? null;
+}
+
+function parseItemIdNumber(itemId: string): number | null {
+  const match = /^MM-(\d+)$/i.exec(itemId.trim());
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Next free MM-xxx id based on max existing numeric suffix (never length+1). */
+export function allocateNextItemId(items: InventoryItem[]): string {
+  const used = new Set(items.map((item) => item.itemId.trim().toUpperCase()));
+  let maxNum = 0;
+  for (const item of items) {
+    const n = parseItemIdNumber(item.itemId);
+    if (n !== null && n > maxNum) maxNum = n;
+  }
+  let next = maxNum + 1;
+  let candidate = `MM-${String(next).padStart(3, "0")}`;
+  while (used.has(candidate.toUpperCase())) {
+    next += 1;
+    candidate = `MM-${String(next).padStart(3, "0")}`;
+  }
+  return candidate;
 }
 
 export async function updateStockIn(
@@ -368,6 +406,13 @@ export async function updateStockMovement(
 }
 
 export async function appendTransaction(transaction: Transaction): Promise<void> {
+  await appendTransactions([transaction]);
+}
+
+export async function appendTransactions(
+  transactions: Transaction[]
+): Promise<void> {
+  if (!transactions.length) return;
   await ensureAuxiliarySheets();
   const sheets = getSheetsClient();
 
@@ -377,23 +422,65 @@ export async function appendTransaction(transaction: Transaction): Promise<void>
     valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
-      values: [
-        [
-          transaction.timestamp,
-          transaction.itemId,
-          transaction.itemName,
-          transaction.type,
-          transaction.quantity,
-          transaction.userEmail,
-          transaction.notes,
-          transaction.destination,
-          transaction.opening ?? "",
-          transaction.add ?? "",
-          transaction.closing ?? "",
-        ],
-      ],
+      values: transactions.map((transaction) => [
+        transaction.timestamp,
+        transaction.itemId,
+        transaction.itemName,
+        transaction.type,
+        transaction.quantity,
+        transaction.userEmail,
+        transaction.notes,
+        transaction.destination,
+        transaction.opening ?? "",
+        transaction.add ?? "",
+        transaction.closing ?? "",
+      ]),
     },
   });
+}
+
+/**
+ * Apply closing stock for many items in few Sheets API calls.
+ * One inventory write batch + one transactions append.
+ */
+export async function applyClosingStockBatch(
+  entries: Array<{ item: InventoryItem; closingEntered: number }>
+): Promise<Array<{ item: InventoryItem; sales: number }>> {
+  if (!entries.length) return [];
+
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const results = entries.map(({ item, closingEntered }) => {
+    const sales = calculateSales(
+      item.openingStock,
+      item.stockIn,
+      closingEntered
+    );
+    const nextItem: InventoryItem = {
+      ...item,
+      openingStock: closingEntered,
+      stockIn: 0,
+      sales,
+      closingStock: closingEntered,
+    };
+    return { item: nextItem, sales, closingEntered };
+  });
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: "RAW",
+      data: results.map(({ item }) => ({
+        range: `${INVENTORY_SHEET}!E${item.rowIndex}:H${item.rowIndex}`,
+        values: [
+          [item.openingStock, item.stockIn, item.sales, item.closingStock],
+        ],
+      })),
+    },
+  });
+
+  return results.map(({ item, sales }) => ({ item, sales }));
 }
 
 function parseTransactionType(raw: string): TransactionType {
@@ -433,7 +520,16 @@ export async function getTransactions(): Promise<Transaction[]> {
 export async function updateItemMetadata(
   update: ItemUpdateRequest
 ): Promise<InventoryItem> {
-  const item = await getInventoryItemById(update.itemId);
+  let item: InventoryItem | null = null;
+  if (update.rowIndex != null && Number.isFinite(update.rowIndex)) {
+    item = await getInventoryItemByRowIndex(update.rowIndex);
+    if (item && update.itemId && item.itemId !== update.itemId) {
+      // Allow save when UI still has stale id but rowIndex is authoritative
+    }
+  }
+  if (!item) {
+    item = await getInventoryItemById(update.itemId);
+  }
   if (!item) {
     throw new Error("Item not found.");
   }
@@ -473,8 +569,7 @@ export async function createInventoryItem(
 ): Promise<InventoryItem> {
   await ensureAuxiliarySheets();
   const items = await getInventoryItems();
-  const nextNum = items.length + 1;
-  const itemId = `MM-${String(nextNum).padStart(3, "0")}`;
+  const itemId = allocateNextItemId(items);
   const openingStock = input.openingStock ?? 0;
   const price = input.price ?? 0;
 
@@ -507,15 +602,27 @@ export async function createInventoryItem(
     },
   });
 
-  const created = await getInventoryItemById(itemId);
+  // Re-read and return the newly appended row (last row with this unique id).
+  const refreshed = await getInventoryItems();
+  const created =
+    [...refreshed].reverse().find((row) => row.itemId === itemId) ?? null;
   if (!created) {
     throw new Error("Failed to create item.");
   }
   return created;
 }
 
-export async function deleteInventoryItem(itemId: string): Promise<void> {
-  const item = await getInventoryItemById(itemId);
+export async function deleteInventoryItem(
+  itemId: string,
+  rowIndex?: number
+): Promise<void> {
+  let item: InventoryItem | null = null;
+  if (rowIndex != null && Number.isFinite(rowIndex)) {
+    item = await getInventoryItemByRowIndex(rowIndex);
+  }
+  if (!item) {
+    item = await getInventoryItemById(itemId);
+  }
   if (!item) {
     throw new Error("Item not found.");
   }
@@ -549,6 +656,68 @@ export async function deleteInventoryItem(itemId: string): Promise<void> {
       ],
     },
   });
+}
+
+/**
+ * Keep the first occurrence of each Item ID; renumber later duplicates to new MM-xxx ids.
+ */
+export async function repairDuplicateItemIds(): Promise<{
+  items: InventoryItem[];
+  repaired: Array<{ rowIndex: number; from: string; to: string; itemName: string }>;
+}> {
+  const items = await getInventoryItems();
+  const seen = new Set<string>();
+  let maxNum = 0;
+  for (const item of items) {
+    const n = parseItemIdNumber(item.itemId);
+    if (n !== null && n > maxNum) maxNum = n;
+  }
+
+  const repaired: Array<{
+    rowIndex: number;
+    from: string;
+    to: string;
+    itemName: string;
+  }> = [];
+  const nextItems = items.map((item) => {
+    const key = item.itemId.trim().toUpperCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      return item;
+    }
+    maxNum += 1;
+    let freshId = `MM-${String(maxNum).padStart(3, "0")}`;
+    while (seen.has(freshId.toUpperCase())) {
+      maxNum += 1;
+      freshId = `MM-${String(maxNum).padStart(3, "0")}`;
+    }
+    seen.add(freshId.toUpperCase());
+    repaired.push({
+      rowIndex: item.rowIndex,
+      from: item.itemId,
+      to: freshId,
+      itemName: item.itemName,
+    });
+    return { ...item, itemId: freshId };
+  });
+
+  if (!repaired.length) {
+    return { items, repaired: [] };
+  }
+
+  const sheets = getSheetsClient();
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: getSpreadsheetId(),
+    requestBody: {
+      valueInputOption: "RAW",
+      data: repaired.map((row) => ({
+        range: `${INVENTORY_SHEET}!A${row.rowIndex}`,
+        values: [[row.to]],
+      })),
+    },
+  });
+
+  return { items: nextItems, repaired };
 }
 
 /** Replace all inventory data rows with the provided catalog entries. */

@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { fetchInventory, submitClosingStock } from "@/lib/api-client";
+import { fetchInventory, submitClosingStockBatch } from "@/lib/api-client";
 import {
   clearClosingDraft,
   countFilledDrafts,
@@ -166,43 +166,41 @@ export function ClosingStockForm() {
 
     submittingRef.current = true;
     setSubmitting(true);
-    let successCount = 0;
-    let remainingDrafts = { ...draftsRef.current };
     try {
-      for (const entry of entries) {
-        if (!navigator.onLine) {
-          throw new Error("Connection lost. Remaining counts are still on this phone.");
-        }
-        const result = await submitClosingStock({
+      const result = await submitClosingStockBatch(
+        entries.map((entry) => ({
           itemId: entry.item.itemId,
           closingStock: entry.closing,
-        });
-        setItems((current) =>
-          current.map((item) =>
-            item.itemId === result.item.itemId ? result.item : item
-          )
-        );
-        remainingDrafts = { ...remainingDrafts, [entry.item.itemId]: "" };
-        draftsRef.current = remainingDrafts;
-        setDrafts(remainingDrafts);
-        saveClosingDraft(remainingDrafts);
-        successCount += 1;
+        }))
+      );
+
+      const updatedById = new Map(result.items.map((item) => [item.itemId, item]));
+      setItems((current) =>
+        current.map((item) => updatedById.get(item.itemId) ?? item)
+      );
+
+      const remainingDrafts = { ...draftsRef.current };
+      for (const entry of entries) {
+        remainingDrafts[entry.item.itemId] = "";
       }
+      draftsRef.current = remainingDrafts;
+      setDrafts(remainingDrafts);
       if (countFilledDrafts(remainingDrafts) === 0) {
         clearClosingDraft();
+      } else {
+        saveClosingDraft(remainingDrafts);
       }
+
       toast.success(
-        `Closing stock saved for ${successCount} item${successCount === 1 ? "" : "s"}. Period rolled.`
+        `Closing stock saved for ${result.count} item${result.count === 1 ? "" : "s"}. Period rolled.`
       );
       setRestoredFromCache(false);
     } catch (error) {
-      setDrafts(remainingDrafts);
-      draftsRef.current = remainingDrafts;
-      saveClosingDraft(remainingDrafts);
+      saveClosingDraft(draftsRef.current);
       toast.error(
         error instanceof Error
-          ? `${successCount} saved to server. ${error.message}`
-          : `${successCount} saved. Remaining counts are cached on this phone.`
+          ? error.message
+          : "Closing stock sync failed. Counts are still cached on this phone."
       );
     } finally {
       submittingRef.current = false;

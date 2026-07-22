@@ -132,4 +132,12 @@ body {
   .sales-ledger-title h2 {
     font-size: 14pt;
   }
+
+  .print\:hidden {
+    display: none !important;
+  }
+
+  .print\:block {
+    display: block !important;
+  }
 }
