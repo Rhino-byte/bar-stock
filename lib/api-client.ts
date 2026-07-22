@@ -262,6 +262,8 @@ export async function fetchRecentCloses() {
       add: number;
       closing: number;
       sales: number;
+      price: number;
+      amount: number;
     }>;
   };
 }

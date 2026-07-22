@@ -8,6 +8,8 @@ export type RecentCloseRow = {
   add: number;
   closing: number;
   sales: number;
+  price: number;
+  amount: number;
   /** True when this item was part of the latest close sync. */
   fromLatestBatch: boolean;
 };
@@ -58,14 +60,18 @@ export function buildRecentCloseReport(
 
   const rows: RecentCloseRow[] = items.map((item) => {
     const fromBatch = byId.get(item.itemId);
+    const price = item.price ?? 0;
     if (fromBatch) {
+      const sales = fromBatch.sales;
       return {
         itemId: item.itemId,
         itemName: item.itemName,
         opening: fromBatch.opening,
         add: fromBatch.add,
         closing: fromBatch.closing,
-        sales: fromBatch.sales,
+        sales,
+        price,
+        amount: sales * price,
         fromLatestBatch: true,
       };
     }
@@ -76,6 +82,8 @@ export function buildRecentCloseReport(
       add: item.stockIn,
       closing: item.closingStock,
       sales: 0,
+      price,
+      amount: 0,
       fromLatestBatch: false,
     };
   });
@@ -83,13 +91,16 @@ export function buildRecentCloseReport(
   // Include orphan batch rows not in inventory (deleted items closed this sync)
   for (const tx of batchTxs) {
     if (items.some((i) => i.itemId === tx.itemId)) continue;
+    const sales = isSalesTransaction(tx) ? tx.quantity : 0;
     rows.push({
       itemId: tx.itemId,
       itemName: tx.itemName,
       opening: tx.opening ?? 0,
       add: tx.add ?? 0,
       closing: tx.closing ?? 0,
-      sales: isSalesTransaction(tx) ? tx.quantity : 0,
+      sales,
+      price: 0,
+      amount: 0,
       fromLatestBatch: true,
     });
   }

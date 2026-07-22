@@ -15,6 +15,8 @@ type RecentCloseRow = {
   add: number;
   closing: number;
   sales: number;
+  price: number;
+  amount: number;
 };
 
 function formatClosedAt(iso: string | null): string {
@@ -24,6 +26,61 @@ function formatClosedAt(iso: string | null): string {
   } catch {
     return iso;
   }
+}
+
+function RecentCloseTable({
+  rows,
+  totalAmount,
+}: {
+  rows: RecentCloseRow[];
+  totalAmount: number;
+}) {
+  return (
+    <table className="sales-ledger w-full min-w-[640px] border-collapse text-sm">
+      <thead>
+        <tr>
+          <th scope="col">ITEM</th>
+          <th scope="col">PREV. OPEN</th>
+          <th scope="col">ADD</th>
+          <th scope="col">B.B.F</th>
+          <th scope="col">SALES</th>
+          <th scope="col">PRICE</th>
+          <th scope="col">AMOUNT</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.itemId}>
+            <td className="sales-ledger-item">{row.itemName}</td>
+            <td className="sales-ledger-num">{formatNumber(row.opening)}</td>
+            <td className="sales-ledger-num">
+              {row.add ? formatNumber(row.add) : "—"}
+            </td>
+            <td className="sales-ledger-num">{formatNumber(row.closing)}</td>
+            <td className="sales-ledger-num">
+              {row.sales ? formatNumber(row.sales) : "—"}
+            </td>
+            <td className="sales-ledger-num">
+              {row.price ? formatNumber(row.price) : "—"}
+            </td>
+            <td className="sales-ledger-num">
+              {row.amount ? formatNumber(row.amount) : "—"}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colSpan={6} className="sales-ledger-item font-bold">
+            TOTAL
+          </td>
+          <td className="sales-ledger-num font-bold">
+            {formatNumber(totalAmount)}
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  );
 }
 
 export function RecentClosesClient() {
@@ -61,6 +118,8 @@ export function RecentClosesClient() {
     );
   }
 
+  const totalAmount = rows.reduce((sum, row) => sum + (row.amount || 0), 0);
+
   return (
     <div className="space-y-4">
       <div className="report-controls flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -69,7 +128,8 @@ export function RecentClosesClient() {
             Recent close
           </h1>
           <p className="text-sm text-slate-500">
-            All catalog items for the latest close — previous opening and B.B.F.
+            All catalog items for the latest close — previous opening, B.B.F,
+            sales and amount.
           </p>
         </div>
         <Button
@@ -101,36 +161,7 @@ export function RecentClosesClient() {
 
           <div className="hidden md:block print:hidden">
             <div className="sales-ledger-wrap overflow-x-auto">
-              <table className="sales-ledger w-full min-w-[560px] border-collapse text-sm">
-                <thead>
-                  <tr>
-                    <th scope="col">ITEM</th>
-                    <th scope="col">PREV. OPEN</th>
-                    <th scope="col">ADD</th>
-                    <th scope="col">B.B.F</th>
-                    <th scope="col">SALES</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.itemId}>
-                      <td className="sales-ledger-item">{row.itemName}</td>
-                      <td className="sales-ledger-num">
-                        {formatNumber(row.opening)}
-                      </td>
-                      <td className="sales-ledger-num">
-                        {row.add ? formatNumber(row.add) : "—"}
-                      </td>
-                      <td className="sales-ledger-num">
-                        {formatNumber(row.closing)}
-                      </td>
-                      <td className="sales-ledger-num">
-                        {formatNumber(row.sales)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <RecentCloseTable rows={rows} totalAmount={totalAmount} />
             </div>
           </div>
 
@@ -156,46 +187,36 @@ export function RecentClosesClient() {
                     </div>
                     <div>
                       <p className="text-slate-500">Sales</p>
-                      <p className="font-medium">{formatNumber(row.sales)}</p>
+                      <p className="font-medium">
+                        {row.sales ? formatNumber(row.sales) : "—"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Price</p>
+                      <p className="font-medium">
+                        {row.price ? formatNumber(row.price) : "—"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Amount</p>
+                      <p className="font-medium">
+                        {row.amount ? formatNumber(row.amount) : "—"}
+                      </p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
             ))}
+            <Card>
+              <CardContent className="flex items-center justify-between p-4 text-sm font-bold">
+                <span>Total</span>
+                <span>{formatNumber(totalAmount)}</span>
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Always include table for print on small screens */}
           <div className="hidden print:block">
-            <table className="sales-ledger w-full border-collapse text-sm">
-              <thead>
-                <tr>
-                  <th scope="col">ITEM</th>
-                  <th scope="col">PREV. OPEN</th>
-                  <th scope="col">ADD</th>
-                  <th scope="col">B.B.F</th>
-                  <th scope="col">SALES</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={`print-${row.itemId}`}>
-                    <td className="sales-ledger-item">{row.itemName}</td>
-                    <td className="sales-ledger-num">
-                      {formatNumber(row.opening)}
-                    </td>
-                    <td className="sales-ledger-num">
-                      {row.add ? formatNumber(row.add) : "—"}
-                    </td>
-                    <td className="sales-ledger-num">
-                      {formatNumber(row.closing)}
-                    </td>
-                    <td className="sales-ledger-num">
-                      {formatNumber(row.sales)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <RecentCloseTable rows={rows} totalAmount={totalAmount} />
           </div>
         </div>
       )}

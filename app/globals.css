@@ -133,6 +133,25 @@ body {
     font-size: 14pt;
   }
 
+  .closing-fill-in {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-top: 1.25rem;
+  }
+
+  .closing-fill-in input {
+    border: none !important;
+    border-bottom: 1px solid #000 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    padding: 0.15rem 0.25rem !important;
+    font-size: 11pt !important;
+    color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
   .print\:hidden {
     display: none !important;
   }
