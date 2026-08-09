@@ -35,6 +35,7 @@ const EMPTY_CREATE = {
   unit: "pcs",
   openingStock: "0",
   price: "0",
+  buyingPrice: "0",
   reorderLevel: "",
   notes: "",
 };
@@ -77,6 +78,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
           reorderLevel: item.reorderLevel,
           notes: item.notes,
           price: item.price,
+          buyingPrice: item.buyingPrice,
         },
         headers
       );
@@ -138,6 +140,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
           unit: createForm.unit || "pcs",
           openingStock: Number(createForm.openingStock) || 0,
           price: Number(createForm.price) || 0,
+          buyingPrice: Number(createForm.buyingPrice) || 0,
           reorderLevel:
             createForm.reorderLevel === ""
               ? null
@@ -211,7 +214,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
     setItems((current) =>
       current.map((item) => {
         if (item.rowIndex !== rowIndex) return item;
-        if (field === "openingStock" || field === "price") {
+        if (field === "openingStock" || field === "price" || field === "buyingPrice") {
           return { ...item, [field]: Number(value) || 0 };
         }
         if (field === "reorderLevel") {
@@ -325,6 +328,17 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                 />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="new-buying-price">Buying price</Label>
+                <Input
+                  id="new-buying-price"
+                  type="number"
+                  value={createForm.buyingPrice}
+                  onChange={(e) =>
+                    setCreateForm((c) => ({ ...c, buyingPrice: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="new-reorder">Reorder</Label>
                 <Input
                   id="new-reorder"
@@ -371,6 +385,7 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                   <TableHead>Opening</TableHead>
                   <TableHead>Closing</TableHead>
                   <TableHead>Price</TableHead>
+                  <TableHead>Buy</TableHead>
                   <TableHead>Reorder</TableHead>
                   <TableHead>Notes</TableHead>
                   <TableHead />
@@ -421,6 +436,19 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         value={item.price}
                         onChange={(event) =>
                           updateField(item.rowIndex, "price", event.target.value)
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Input
+                        type="number"
+                        value={item.buyingPrice}
+                        onChange={(event) =>
+                          updateField(
+                            item.rowIndex,
+                            "buyingPrice",
+                            event.target.value
+                          )
                         }
                       />
                     </TableCell>
@@ -533,6 +561,23 @@ export function ItemsTable({ initialItems }: ItemsTableProps) {
                         value={item.price}
                         onChange={(event) =>
                           updateField(item.rowIndex, "price", event.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`${item.itemId}-buying-price`}>
+                        Buying price
+                      </Label>
+                      <Input
+                        id={`${item.itemId}-buying-price`}
+                        type="number"
+                        value={item.buyingPrice}
+                        onChange={(event) =>
+                          updateField(
+                            item.rowIndex,
+                            "buyingPrice",
+                            event.target.value
+                          )
                         }
                       />
                     </div>

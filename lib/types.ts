@@ -11,7 +11,10 @@ export interface InventoryItem {
   closingStock: number;
   reorderLevel: number | null;
   notes: string;
+  /** Selling price (Sheet1 col K). */
   price: number;
+  /** Cost / buy price (Sheet1 col L); blank sheet cells read as 0. */
+  buyingPrice: number;
 }
 
 /** @deprecated Prefer `sales` — kept for gradual migration in reports of legacy rows. */
@@ -19,8 +22,12 @@ export type InventoryItemLegacy = InventoryItem & { stockOut?: number };
 
 export type StockMovementType = "in" | "close";
 
-/** Legacy transaction type still readable from Sheets. */
-export type TransactionType = StockMovementType | "out";
+/** Legacy `out` still readable; `adjust` / `adjust_stock` for admin corrections. */
+export type TransactionType =
+  | StockMovementType
+  | "out"
+  | "adjust"
+  | "adjust_stock";
 
 export interface StockMovementRequest {
   itemId: string;
@@ -37,16 +44,35 @@ export interface Transaction {
   itemId: string;
   itemName: string;
   type: TransactionType;
-  /** For `in`: units added. For `close`/`out`: sales (units sold). */
+  /**
+   * For `in`: units added.
+   * For `close`/`out`/`adjust`: sales units (adjust is signed).
+   * For `adjust_stock`: on-hand delta (new − old closing).
+   */
   quantity: number;
   userEmail: string;
   notes: string;
   /** Legacy stock-out destination; unused for new close rows. */
   destination: string;
-  /** Snapshot fields on close rows (blank for stock-in). */
+  /** Snapshot fields on close/adjust rows (blank for stock-in). */
   opening: number | null;
   add: number | null;
   closing: number | null;
+}
+
+export interface CorrectionLogEntry {
+  timestamp: string;
+  effectiveDate: string;
+  kind: "sales" | "stock";
+  itemId: string;
+  itemName: string;
+  salesDelta: number | null;
+  stockBefore: number;
+  stockAfter: number;
+  openingBefore: number;
+  openingAfter: number;
+  userEmail: string;
+  notes: string;
 }
 
 export interface AlertLogEntry {
@@ -73,6 +99,7 @@ export interface ItemUpdateRequest {
   reorderLevel?: number | null;
   notes?: string;
   price?: number;
+  buyingPrice?: number;
 }
 
 export interface ItemCreateRequest {
@@ -83,6 +110,7 @@ export interface ItemCreateRequest {
   reorderLevel?: number | null;
   notes?: string;
   price?: number;
+  buyingPrice?: number;
 }
 
 export interface ItemDeleteRequest {
@@ -90,7 +118,7 @@ export interface ItemDeleteRequest {
   rowIndex?: number;
 }
 
-/** True when transaction represents sold units (close or legacy out). */
+/** True when transaction represents sold units (close, legacy out, or sales adjust). */
 export function isSalesTransaction(tx: Pick<Transaction, "type">): boolean {
-  return tx.type === "close" || tx.type === "out";
+  return tx.type === "close" || tx.type === "out" || tx.type === "adjust";
 }

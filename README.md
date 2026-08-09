@@ -7,6 +7,8 @@ A Next.js inventory app for Merry Mary that uses Google Sheets as the source of 
 - **Staff workspace:** record stock in and closing stock (physical count) against the shared Google Sheet
 - **Admin dashboard:** KPIs, low-stock table, item management (add/remove), analytics charts
 - **Sales ledger:** printable Merry Mary sales records (OPEN / ADD / TOTAL / B.B.F / SALES / PRICE / AMOUNT)
+- **Profit:** admin view of revenue, cost, and profit from sell price vs buying price
+- **Corrections:** admin fixes for missed/wrong sales or live stock, logged to CorrectionsLog
 - **Email alerts:** SMTP notifications when stock falls to the reorder level
 - **Audit log:** every movement is appended to a `Transactions` sheet tab
 
@@ -34,18 +36,19 @@ Use this spreadsheet (or your own copy with the same columns):
 
 `Sheet1` columns:
 
-| A | B | C | D | E | F | G | H | I | J | K |
-|---|---|---|---|---|---|---|---|---|---|---|
-| Item ID | Item Name | Category | Unit | Opening Stock | Stock In | Sales | Closing Stock | Reorder Level | Notes | Price |
+| A | B | C | D | E | F | G | H | I | J | K | L |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Item ID | Item Name | Category | Unit | Opening Stock | Stock In | Sales | Closing Stock | Reorder Level | Notes | Price | Buying Price |
 
 The app will auto-create these tabs if they do not exist:
 
-- `Transactions` — Timestamp, Item ID, Item Name, Type (`in` / `close` / legacy `out`), Quantity, User Email, Notes, Destination, Opening, Add, Closing
+- `Transactions` — Timestamp, Item ID, Item Name, Type (`in` / `close` / `adjust` / `adjust_stock` / legacy `out`), Quantity, User Email, Notes, Destination, Opening, Add, Closing
 - `AlertLog`
+- `CorrectionsLog` — Timestamp, Effective Date, Kind (`sales` / `stock`), Item ID, Item Name, Sales Delta, Stock Before/After, Opening Before/After, User Email, Notes
 
 Share the spreadsheet with your service account email as **Editor**.
 
-From Admin → Items you can **Load Merry Mary catalog** to replace Sheet1 with the priced product list.
+From Admin → Items you can **Load Merry Mary catalog** to replace Sheet1 with the priced product list. Admin → **Corrections** fixes missed/wrong sales or live stock counts and writes Sheet1, Transactions, and CorrectionsLog together.
 
 ## Environment variables
 

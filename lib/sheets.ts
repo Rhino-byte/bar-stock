@@ -1,4 +1,5 @@
 import { google } from "googleapis";
+import { dateKeyToNoonIso } from "./dates";
 import {
   calculateSales,
   calculateTotalStock,
@@ -7,6 +8,7 @@ import {
 } from "./stock";
 import type {
   AlertLogEntry,
+  CorrectionLogEntry,
   InventoryItem,
   ItemCreateRequest,
   ItemUpdateRequest,
@@ -17,6 +19,22 @@ import type {
 const INVENTORY_SHEET = "Sheet1";
 const TRANSACTIONS_SHEET = "Transactions";
 const ALERT_LOG_SHEET = "AlertLog";
+const CORRECTIONS_LOG_SHEET = "CorrectionsLog";
+
+const CORRECTIONS_LOG_HEADERS = [
+  "Timestamp",
+  "Effective Date",
+  "Kind",
+  "Item ID",
+  "Item Name",
+  "Sales Delta",
+  "Stock Before",
+  "Stock After",
+  "Opening Before",
+  "Opening After",
+  "User Email",
+  "Notes",
+] as const;
 
 const INVENTORY_HEADERS = [
   "Item ID",
@@ -30,6 +48,7 @@ const INVENTORY_HEADERS = [
   "Reorder Level",
   "Notes",
   "Price",
+  "Buying Price",
 ] as const;
 
 const TRANSACTION_HEADERS = [
@@ -99,6 +118,7 @@ function rowToItem(row: string[], rowIndex: number): InventoryItem | null {
     reorderLevel: parseOptionalNumber(row[8]),
     notes: row[9]?.trim() ?? "",
     price: parseSheetNumber(row[10]),
+    buyingPrice: parseSheetNumber(row[11]),
   };
 }
 
@@ -115,6 +135,7 @@ function itemToRowValues(item: Omit<InventoryItem, "rowIndex">): (string | numbe
     item.reorderLevel ?? "",
     item.notes,
     item.price,
+    item.buyingPrice,
   ];
 }
 
@@ -137,6 +158,12 @@ export async function ensureAuxiliarySheets(): Promise<void> {
   if (!existing.has(ALERT_LOG_SHEET)) {
     requests.push({
       addSheet: { properties: { title: ALERT_LOG_SHEET } },
+    });
+  }
+
+  if (!existing.has(CORRECTIONS_LOG_SHEET)) {
+    requests.push({
+      addSheet: { properties: { title: CORRECTIONS_LOG_SHEET } },
     });
   }
 
@@ -171,6 +198,19 @@ export async function ensureAuxiliarySheets(): Promise<void> {
     });
   }
 
+  if (!existing.has(CORRECTIONS_LOG_SHEET)) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${CORRECTIONS_LOG_SHEET}!A1:L1`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[...CORRECTIONS_LOG_HEADERS]],
+      },
+    });
+  } else {
+    await ensureCorrectionsLogHeaders(sheets, spreadsheetId);
+  }
+
   await ensureInventoryHeaders(sheets, spreadsheetId);
 }
 
@@ -180,10 +220,10 @@ async function ensureInventoryHeaders(
 ): Promise<void> {
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${INVENTORY_SHEET}!A1:K1`,
+    range: `${INVENTORY_SHEET}!A1:L1`,
   });
   const header = [...(response.data.values?.[0] ?? [])];
-  while (header.length < 11) {
+  while (header.length < INVENTORY_HEADERS.length) {
     header.push("");
   }
   let changed = false;
@@ -199,6 +239,9 @@ async function ensureInventoryHeaders(
       } else if (i === 10 && header[i]?.trim() !== "Price") {
         header[i] = "Price";
         changed = true;
+      } else if (i === 11 && header[i]?.trim() !== "Buying Price") {
+        header[i] = "Buying Price";
+        changed = true;
       }
     }
   }
@@ -206,10 +249,14 @@ async function ensureInventoryHeaders(
     header[10] = "Price";
     changed = true;
   }
+  if (header[11]?.trim() !== "Buying Price") {
+    header[11] = "Buying Price";
+    changed = true;
+  }
   if (changed) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${INVENTORY_SHEET}!A1:K1`,
+      range: `${INVENTORY_SHEET}!A1:L1`,
       valueInputOption: "RAW",
       requestBody: { values: [header] },
     });
@@ -261,12 +308,43 @@ async function ensureTransactionsExtendedColumns(
   }
 }
 
+async function ensureCorrectionsLogHeaders(
+  sheets: ReturnType<typeof getSheetsClient>,
+  spreadsheetId: string
+): Promise<void> {
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${CORRECTIONS_LOG_SHEET}!A1:L1`,
+  });
+  const header = [...(response.data.values?.[0] ?? [])];
+  while (header.length < CORRECTIONS_LOG_HEADERS.length) {
+    header.push("");
+  }
+  let changed = false;
+  for (let i = 0; i < CORRECTIONS_LOG_HEADERS.length; i++) {
+    if (header[i]?.trim() !== CORRECTIONS_LOG_HEADERS[i]) {
+      if (!header[i]?.trim()) {
+        header[i] = CORRECTIONS_LOG_HEADERS[i];
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${CORRECTIONS_LOG_SHEET}!A1:L1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [header] },
+    });
+  }
+}
+
 export async function getInventoryItems(): Promise<InventoryItem[]> {
   await ensureAuxiliarySheets();
   const sheets = getSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: getSpreadsheetId(),
-    range: `${INVENTORY_SHEET}!A2:K`,
+    range: `${INVENTORY_SHEET}!A2:L`,
   });
 
   const rows = response.data.values ?? [];
@@ -487,6 +565,8 @@ function parseTransactionType(raw: string): TransactionType {
   const value = raw.trim().toLowerCase();
   if (value === "out") return "out";
   if (value === "close") return "close";
+  if (value === "adjust") return "adjust";
+  if (value === "adjust_stock") return "adjust_stock";
   return "in";
 }
 
@@ -544,6 +624,8 @@ export async function updateItemMetadata(
       update.reorderLevel !== undefined ? update.reorderLevel : item.reorderLevel,
     notes: update.notes ?? item.notes,
     price: update.price !== undefined ? update.price : item.price,
+    buyingPrice:
+      update.buyingPrice !== undefined ? update.buyingPrice : item.buyingPrice,
   };
 
   nextItem.closingStock = calculateTotalStock(
@@ -554,7 +636,7 @@ export async function updateItemMetadata(
   const sheets = getSheetsClient();
   await sheets.spreadsheets.values.update({
     spreadsheetId: getSpreadsheetId(),
-    range: `${INVENTORY_SHEET}!A${item.rowIndex}:K${item.rowIndex}`,
+    range: `${INVENTORY_SHEET}!A${item.rowIndex}:L${item.rowIndex}`,
     valueInputOption: "RAW",
     requestBody: {
       values: [itemToRowValues(nextItem)],
@@ -572,6 +654,7 @@ export async function createInventoryItem(
   const itemId = allocateNextItemId(items);
   const openingStock = input.openingStock ?? 0;
   const price = input.price ?? 0;
+  const buyingPrice = input.buyingPrice ?? 0;
 
   const newItem: Omit<InventoryItem, "rowIndex"> = {
     itemId,
@@ -585,6 +668,7 @@ export async function createInventoryItem(
     reorderLevel: input.reorderLevel ?? null,
     notes: input.notes?.trim() ?? "",
     price,
+    buyingPrice,
   };
 
   if (!newItem.itemName) {
@@ -594,7 +678,7 @@ export async function createInventoryItem(
   const sheets = getSheetsClient();
   await sheets.spreadsheets.values.append({
     spreadsheetId: getSpreadsheetId(),
-    range: `${INVENTORY_SHEET}!A:K`,
+    range: `${INVENTORY_SHEET}!A:L`,
     valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
@@ -772,19 +856,240 @@ export async function replaceInventoryCatalog(
       reorderLevel: null,
       notes: "",
       price: entry.price,
+      buyingPrice: 0,
     });
   });
 
   if (rows.length) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${INVENTORY_SHEET}!A2:K${rows.length + 1}`,
+      range: `${INVENTORY_SHEET}!A2:L${rows.length + 1}`,
       valueInputOption: "RAW",
       requestBody: { values: rows },
     });
   }
 
   return getInventoryItems();
+}
+
+export async function appendCorrectionLog(
+  entry: CorrectionLogEntry
+): Promise<void> {
+  await ensureAuxiliarySheets();
+  const sheets = getSheetsClient();
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSpreadsheetId(),
+    range: `${CORRECTIONS_LOG_SHEET}!A:L`,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values: [
+        [
+          entry.timestamp,
+          entry.effectiveDate,
+          entry.kind,
+          entry.itemId,
+          entry.itemName,
+          entry.salesDelta ?? "",
+          entry.stockBefore,
+          entry.stockAfter,
+          entry.openingBefore,
+          entry.openingAfter,
+          entry.userEmail,
+          entry.notes,
+        ],
+      ],
+    },
+  });
+}
+
+export type SalesAdjustmentInput = {
+  itemId: string;
+  effectiveDate: string;
+  salesDelta: number;
+  notes: string;
+  userEmail: string;
+};
+
+export type StockSetInput = {
+  itemId: string;
+  closingStock: number;
+  notes: string;
+  userEmail: string;
+};
+
+export type AdjustmentResult = {
+  item: InventoryItem;
+  transaction: Transaction;
+  log: CorrectionLogEntry;
+};
+
+/**
+ * Fix sales for a business date: append adjust tx, move live Opening/Closing
+ * by −delta, bump sheet Sales, log to CorrectionsLog.
+ */
+export async function applySalesAdjustment(
+  input: SalesAdjustmentInput
+): Promise<AdjustmentResult> {
+  const item = await getInventoryItemById(input.itemId);
+  if (!item) {
+    throw new Error("Item not found.");
+  }
+
+  const salesDelta = Number(input.salesDelta);
+  if (!Number.isFinite(salesDelta) || salesDelta === 0) {
+    throw new Error("salesDelta must be a non-zero number.");
+  }
+
+  const notes = input.notes.trim();
+  if (!notes) {
+    throw new Error("Notes are required.");
+  }
+
+  const nextOpening = item.openingStock - salesDelta;
+  const nextClosing = item.closingStock - salesDelta;
+  if (nextOpening < 0 || nextClosing < 0) {
+    throw new Error(
+      `Adjustment would make stock negative (opening ${nextOpening}, closing ${nextClosing}).`
+    );
+  }
+
+  const nextItem: InventoryItem = {
+    ...item,
+    openingStock: nextOpening,
+    closingStock: nextClosing,
+    sales: item.sales + salesDelta,
+  };
+
+  const sheets = getSheetsClient();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSpreadsheetId(),
+    range: `${INVENTORY_SHEET}!E${item.rowIndex}:H${item.rowIndex}`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [
+        [
+          nextItem.openingStock,
+          nextItem.stockIn,
+          nextItem.sales,
+          nextItem.closingStock,
+        ],
+      ],
+    },
+  });
+
+  const transaction: Transaction = {
+    timestamp: dateKeyToNoonIso(input.effectiveDate),
+    itemId: item.itemId,
+    itemName: item.itemName,
+    type: "adjust",
+    quantity: salesDelta,
+    userEmail: input.userEmail,
+    notes,
+    destination: "",
+    opening: nextItem.openingStock,
+    add: nextItem.stockIn,
+    closing: nextItem.closingStock,
+  };
+  await appendTransaction(transaction);
+
+  const log: CorrectionLogEntry = {
+    timestamp: new Date().toISOString(),
+    effectiveDate: input.effectiveDate,
+    kind: "sales",
+    itemId: item.itemId,
+    itemName: item.itemName,
+    salesDelta,
+    stockBefore: item.closingStock,
+    stockAfter: nextItem.closingStock,
+    openingBefore: item.openingStock,
+    openingAfter: nextItem.openingStock,
+    userEmail: input.userEmail,
+    notes,
+  };
+  await appendCorrectionLog(log);
+
+  return { item: nextItem, transaction, log };
+}
+
+/**
+ * Set live Opening = Closing to a physical count; append adjust_stock + log.
+ * Does not change Sales (G) or ADD.
+ */
+export async function applyStockSet(
+  input: StockSetInput
+): Promise<AdjustmentResult> {
+  const item = await getInventoryItemById(input.itemId);
+  if (!item) {
+    throw new Error("Item not found.");
+  }
+
+  const closingStock = Number(input.closingStock);
+  if (!Number.isFinite(closingStock) || closingStock < 0) {
+    throw new Error("Closing stock must be zero or greater.");
+  }
+
+  const notes = input.notes.trim();
+  if (!notes) {
+    throw new Error("Notes are required.");
+  }
+
+  const nextItem: InventoryItem = {
+    ...item,
+    openingStock: closingStock,
+    closingStock,
+  };
+
+  const sheets = getSheetsClient();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSpreadsheetId(),
+    range: `${INVENTORY_SHEET}!E${item.rowIndex}:H${item.rowIndex}`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [
+        [
+          nextItem.openingStock,
+          nextItem.stockIn,
+          nextItem.sales,
+          nextItem.closingStock,
+        ],
+      ],
+    },
+  });
+
+  const delta = closingStock - item.closingStock;
+  const transaction: Transaction = {
+    timestamp: new Date().toISOString(),
+    itemId: item.itemId,
+    itemName: item.itemName,
+    type: "adjust_stock",
+    quantity: delta,
+    userEmail: input.userEmail,
+    notes,
+    destination: "",
+    opening: nextItem.openingStock,
+    add: nextItem.stockIn,
+    closing: nextItem.closingStock,
+  };
+  await appendTransaction(transaction);
+
+  const log: CorrectionLogEntry = {
+    timestamp: transaction.timestamp,
+    effectiveDate: "",
+    kind: "stock",
+    itemId: item.itemId,
+    itemName: item.itemName,
+    salesDelta: null,
+    stockBefore: item.closingStock,
+    stockAfter: nextItem.closingStock,
+    openingBefore: item.openingStock,
+    openingAfter: nextItem.openingStock,
+    userEmail: input.userEmail,
+    notes,
+  };
+  await appendCorrectionLog(log);
+
+  return { item: nextItem, transaction, log };
 }
 
 export async function getAlertLogs(): Promise<AlertLogEntry[]> {

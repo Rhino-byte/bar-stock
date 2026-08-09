@@ -75,3 +75,11 @@ export function isDateKeyInRange(
 ): boolean {
   return !!dateKey && dateKey >= fromKey && dateKey <= toKey;
 }
+
+/** Noon on a calendar day in East Africa (for dating sales adjustments). */
+export function dateKeyToNoonIso(dateKey: string): string {
+  if (!DATE_RE.test(dateKey)) {
+    throw new Error("Invalid date key. Use YYYY-MM-DD.");
+  }
+  return `${dateKey}T12:00:00+03:00`;
+}

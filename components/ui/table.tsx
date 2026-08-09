@@ -5,8 +5,14 @@ export function Table({
   ...props
 }: React.TableHTMLAttributes<HTMLTableElement>) {
   return (
-    <div className="w-full overflow-auto">
-      <table className={cn("w-full caption-bottom text-sm", className)} {...props} />
+    <div className="w-full overflow-auto rounded-lg border border-slate-300 bg-white">
+      <table
+        className={cn(
+          "w-full caption-bottom border-collapse text-sm",
+          className
+        )}
+        {...props}
+      />
     </div>
   );
 }
@@ -15,14 +21,19 @@ export function TableHeader({
   className,
   ...props
 }: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={cn("[&_tr]:border-b", className)} {...props} />;
+  return (
+    <thead
+      className={cn("bg-slate-50 [&_tr]:border-b-0", className)}
+      {...props}
+    />
+  );
 }
 
 export function TableBody({
   className,
   ...props
 }: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <tbody className={cn("[&_tr:last-child]:border-0", className)} {...props} />;
+  return <tbody className={cn(className)} {...props} />;
 }
 
 export function TableRow({
@@ -31,7 +42,7 @@ export function TableRow({
 }: React.HTMLAttributes<HTMLTableRowElement>) {
   return (
     <tr
-      className={cn("border-b border-slate-100 transition-colors hover:bg-slate-50", className)}
+      className={cn("transition-colors hover:bg-slate-50/80", className)}
       {...props}
     />
   );
@@ -44,7 +55,7 @@ export function TableHead({
   return (
     <th
       className={cn(
-        "h-10 px-3 text-left align-middle font-medium text-slate-500",
+        "h-10 border border-slate-300 bg-slate-50 px-3 text-left align-middle font-semibold text-slate-700",
         className
       )}
       {...props}
@@ -56,5 +67,13 @@ export function TableCell({
   className,
   ...props
 }: React.TdHTMLAttributes<HTMLTableCellElement>) {
-  return <td className={cn("p-3 align-middle", className)} {...props} />;
+  return (
+    <td
+      className={cn(
+        "border border-slate-200 p-3 align-middle text-slate-800",
+        className
+      )}
+      {...props}
+    />
+  );
 }
